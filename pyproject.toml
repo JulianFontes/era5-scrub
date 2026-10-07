@@ -1,11 +1,10 @@
 [project]
-name = "era5-reader"
+name = "era5-scrub"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
-    "cfgrib>=0.9.15.1",
-    "eccodes>=2.49.0",
-    "eccodeslib>=2.49.0.30 ; sys_platform != 'win32'",
-    "matplotlib>=3.10.9",
-    "xarray>=2025.6.1",
+    "cdsapi>=0.7.7",
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "xarray>=2026.9.0",
 ]
