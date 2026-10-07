@@ -1,12 +1,11 @@
 [project]
-name = "era5-src"
+name = "era5-reader"
 version = "0.1.0"
-description = "Pull hourly ERA5 pressure-level data from the Copernicus CDS"
 requires-python = ">=3.10"
 dependencies = [
-    "cdsapi>=0.7.4",
-    "numpy>=1.26",
-    "pandas>=2.1",
-    "xarray>=2024.1",
-    "netCDF4>=1.6.5",
+    "cfgrib>=0.9.15.1",
+    "eccodes>=2.49.0",
+    "eccodeslib>=2.49.0.30 ; sys_platform != 'win32'",
+    "matplotlib>=3.10.9",
+    "xarray>=2025.6.1",
 ]
