@@ -58,7 +58,7 @@ COST_LIMIT, COST_PER_FIELD = 60000, 6
 LEVELS = ["1000", "950", "900", "850", "800", "750", "650", "550",
           "450", "350", "250", "200", "150", "100", "50"]
 
-BOSTON_AREA = [47.5, -76.0, 37.5, -66.0]   # N, W, S, E: 10 x 10 deg around Boston
+BOSTON_AREA = [45.5, -74, 39.5, -68]   # N, W, S, E: 6 x 6 deg around Boston
 
 def parse():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -75,6 +75,8 @@ def parse():
                    help="days per CDS request; default = most that fit under the CDS cost limit")
     p.add_argument("--workdir", default="data/era5_boston/chunks")
     p.add_argument("--out", default="data/era5_boston/era5_boston_20260601_20260630.nc")
+    p.add_argument("--format", choices=["nc", "grib"], default="nc",
+                   help="download format; grib saves the raw chunks and skips the netCDF merge")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -99,7 +101,7 @@ def area_tag(area):
     return f"N{n:g}_W{abs(w):g}_S{s:g}_E{abs(e):g}"
 
 
-def request_for(d0, d1, hours_needed, variables, area):
+def request_for(d0, d1, hours_needed, variables, area, fmt="nc"):
     days = pd.date_range(d0, d1, freq="D")
     # CDS requests are a product of year x month x day x time, so every listed hour
     # comes back for every listed day; the result is filtered to exact stamps later.
@@ -111,7 +113,7 @@ def request_for(d0, d1, hours_needed, variables, area):
         "day": sorted({f"{x.day:02d}" for x in days}),
         "time": sorted({f"{h:02d}:00" for h in hours_needed}),
         "pressure_level": LEVELS,
-        "data_format": "netcdf",
+        "data_format": "grib" if fmt == "grib" else "netcdf",
         "download_format": "unarchived",
         "area": area,
     }
@@ -137,7 +139,7 @@ def fetch(client, req, target):
     client.retrieve(DATASET, req).download(tmp)
     if zipfile.is_zipfile(tmp):              # CDS sometimes zips multi-stream netCDF
         with zipfile.ZipFile(tmp) as z:
-            ncs = [m for m in z.namelist() if m.endswith(".nc")]
+            ncs = [m for m in z.namelist() if m.endswith((".nc", ".grib"))]
             if len(ncs) != 1:
                 sys.exit(f"Unexpected zip contents in {tmp}: {z.namelist()}")
             with z.open(ncs[0]) as src, open(target, "wb") as dst:
@@ -164,8 +166,8 @@ def main():
     for d0, d1 in chunks(a.start, a.end, a.chunk_days):
         sel = stamps[(stamps >= pd.Timestamp(d0)) & (stamps < pd.Timestamp(d1) + pd.Timedelta(days=1))]
         if len(sel):
-            target = os.path.join(a.workdir, f"era5_{d0:%Y%m%d}_{d1:%Y%m%d}_{tag}.nc")
-            plan.append((d0, d1, sel, target, request_for(d0, d1, sel.hour, variables, a.area)))
+            target = os.path.join(a.workdir, f"era5_{d0:%Y%m%d}_{d1:%Y%m%d}_{tag}.{a.format}")
+            plan.append((d0, d1, sel, target, request_for(d0, d1, sel.hour, variables, a.area, a.format)))
     print(f"{len(plan)} CDS requests of up to {a.chunk_days} days each")
     if a.dry_run:
         for d0, d1, sel, target, req in plan:
@@ -181,6 +183,10 @@ def main():
             print(f"[{i}/{len(plan)}] {target} exists, skipping"); continue
         print(f"[{i}/{len(plan)}] requesting {d0}..{d1} ({len(sel)} timestamps)")
         fetch(client, req, target)
+
+    if a.format == "grib":
+        print(f"GRIB chunks are in {a.workdir}; the merge below is netCDF-only, so skipping it")
+        return
 
     parts = []
     for d0, d1, sel, target, req in plan:
