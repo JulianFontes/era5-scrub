@@ -20,6 +20,6 @@ if [ -f pull_era5.pid ] && kill -0 "$(cat pull_era5.pid)" 2>/dev/null; then
 fi
 
 uv sync
-nohup uv run pull_era5.py --c3dir-only "$@" > output.log 2>&1 &
+nohup uv run par_pull_era5.py --c3dir-only "$@" > output.log 2>&1 &
 echo $! > pull_era5.pid
 echo "Started in background, PID $(cat pull_era5.pid). Follow with: tail -f output.log"
