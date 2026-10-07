@@ -1,7 +1,9 @@
 """
-Pull one month of hourly ERA5 pressure-level data (June 2026 by default), in the same
-layout as era5_subset.nc (valid_time x pressure_level x latitude x longitude,
-16 variables, 15 levels).
+Pull one month of hourly ERA5 pressure-level data around Boston during the 2026 World Cup month
+(June 2026 by default), in the same layout as era5_subset.nc
+(valid_time x pressure_level x latitude x longitude, 16 variables, 15 levels).
+
+Default domain: 10 x 10 degrees centered on Boston (~42.4N, 71.1W), 41 x 41 grid points.
 
 Setup (once):
     uv sync   (cdsapi, xarray, netCDF4 are project dependencies)
@@ -13,20 +15,23 @@ Setup (once):
 
 Spacing: every timestamp is exactly --step-hours apart, starting 00 UTC on
 --start. Steps that divide 24 (1, 2, 3, 4, 6, 8, 12) keep the same hours every
-day. For June (30 days):
+day. For the default 30-day window (June 2026):
     --step-hours 1  -> 720 timestamps (default, every hour)
     --step-hours 3  -> 240
     --step-hours 6  -> 120
-Pick a different month with --start/--end, e.g. --start 2026-07-01 --end 2026-07-31.
+Pick a different window with --start/--end, e.g. --start 2026-07-01 --end 2026-07-31.
 
 Examples:
-    python pull_era5.py                                   # hourly, June 2026, original box
+    python pull_era5.py                                   # hourly, June 2026, Boston box
     python pull_era5.py --step-hours 3
-    python pull_era5.py --area 37.75 -88.25 30 -80.5      # 32x32 box around Atlanta
+    python pull_era5.py --c3dir-only                      # 8 variables, ~3x fewer requests
+    python pull_era5.py --area 34.0 -84.75 33.5 -84.0     # the original 3x4 Atlanta box
     python pull_era5.py --dry-run                         # print the plan, download nothing
 
 Downloads go in chunks of as many days as fit under the CDS request cost limit
-(1 day for hourly, all 16 variables) to --workdir; reruns skip chunks already on disk, so an interrupted pull resumes.
+(1 day for hourly, all 16 variables; 3 days with --c3dir-only) to --workdir. Chunk
+filenames include the area, so different regions never collide. Reruns skip chunks
+already on disk, so an interrupted pull resumes.
 """
 import argparse, os, sys, zipfile, shutil
 from datetime import date, timedelta
@@ -53,6 +58,7 @@ COST_LIMIT, COST_PER_FIELD = 60000, 6
 LEVELS = ["1000", "950", "900", "850", "800", "750", "650", "550",
           "450", "350", "250", "200", "150", "100", "50"]
 
+BOSTON_AREA = [47.5, -76.0, 37.5, -66.0]   # N, W, S, E: 10 x 10 deg around Boston
 
 def parse():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -61,14 +67,14 @@ def parse():
     p.add_argument("--step-hours", type=int, default=1,
                    help="fixed spacing between timestamps; a divisor of 24 keeps the same hours each day")
     p.add_argument("--area", type=float, nargs=4, metavar=("N", "W", "S", "E"),
-                   default=[34.0, -84.75, 33.5, -84.0],
-                   help="bounding box; default = the 3x4 box of era5_subset.nc")
+                   default=BOSTON_AREA,
+                   help="bounding box; default = 10x10 deg centered on Boston")
     p.add_argument("--c3dir-only", action="store_true",
                    help="only the 8 C3DIR-related variables (smaller download)")
     p.add_argument("--chunk-days", type=int, default=None,
                    help="days per CDS request; default = most that fit under the CDS cost limit")
-    p.add_argument("--workdir", default="data/era5/chunks")
-    p.add_argument("--out", default="data/era5/era5_month_hourly.nc")
+    p.add_argument("--workdir", default="data/era5_boston/chunks")
+    p.add_argument("--out", default="data/era5_boston/era5_boston_20260601_20260630.nc")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -85,6 +91,12 @@ def chunks(start, end, days):
         e = min(d0 + timedelta(days=days - 1), d1)
         yield d0, e
         d0 = e + timedelta(days=1)
+
+
+def area_tag(area):
+    """Short string for filenames, e.g. [47.5, -76, 37.5, -66] -> 'N47.5_W76_S37.5_E66'."""
+    n, w, s, e = area
+    return f"N{n:g}_W{abs(w):g}_S{s:g}_E{abs(e):g}"
 
 
 def request_for(d0, d1, hours_needed, variables, area):
@@ -147,11 +159,12 @@ def main():
     if a.chunk_days is None:
         hours_per_day = len(set(stamps.hour))
         a.chunk_days = max(1, COST_LIMIT // (COST_PER_FIELD * hours_per_day * len(variables) * len(LEVELS)))
+    tag = area_tag(a.area)
     plan = []
     for d0, d1 in chunks(a.start, a.end, a.chunk_days):
         sel = stamps[(stamps >= pd.Timestamp(d0)) & (stamps < pd.Timestamp(d1) + pd.Timedelta(days=1))]
         if len(sel):
-            target = os.path.join(a.workdir, f"era5_{d0:%Y%m%d}_{d1:%Y%m%d}.nc")
+            target = os.path.join(a.workdir, f"era5_{d0:%Y%m%d}_{d1:%Y%m%d}_{tag}.nc")
             plan.append((d0, d1, sel, target, request_for(d0, d1, sel.hour, variables, a.area)))
     print(f"{len(plan)} CDS requests of up to {a.chunk_days} days each")
     if a.dry_run:
@@ -181,7 +194,7 @@ def main():
     if missing:
         print(f"WARNING: {missing} requested timestamps not returned (e.g. beyond ERA5's latest date)")
     enc = {v: {"zlib": True, "complevel": 4} for v in out.data_vars}
-    out.attrs["selection"] = f"step={a.step_hours}h, n={len(stamps)}, window={a.start}..{a.end}"
+    out.attrs["selection"] = f"step={a.step_hours}h, n={len(stamps)}, window={a.start}..{a.end}, area={a.area}"
     out.to_netcdf(a.out, encoding=enc)
     print(f"wrote {a.out}: {dict(out.sizes)}")
 
