@@ -1,2 +1,4 @@
 era5_secrets.txt
 data/*
+*.log
+*.pid
